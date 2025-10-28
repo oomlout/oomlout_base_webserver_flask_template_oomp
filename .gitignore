@@ -11,6 +11,7 @@ _pcb.lck
 *.tmp
 *.lck
 outputs/
+parts/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
