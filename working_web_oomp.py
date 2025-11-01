@@ -31,7 +31,7 @@ PARTS_DIR = BASE_DIR / "parts"
 PART_SOURCE_SPECS: List[Tuple[str, Any]] = []
 PART_SOURCE_SPECS.append(("base_parts", PARTS_DIR))
 # Z:\oomlout_oomp_version_1_messy oomp_main
-PART_SOURCE_SPECS.append(("oomp_main", r"Z:\oomlout_oomp_version_1_messy\parts"))
+#PART_SOURCE_SPECS.append(("oomp_main", r"Z:\oomlout_oomp_version_1_messy\parts"))
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
@@ -504,7 +504,8 @@ _LAST_RELOAD_SUMMARY: Dict[str, Any] = {}
 
 TEMPLATE_DIR = BASE_DIR / "web_pages_oomp"
 STATIC_DIR = TEMPLATE_DIR / "static"
-SITE_TITLE = "Flask Oomp Navigator"
+# Set the site title to the current directory name
+SITE_TITLE = BASE_DIR.name
 app = Flask(
     __name__,
     template_folder=str(TEMPLATE_DIR),
@@ -831,12 +832,6 @@ def part_media(group: str, asset_path: str):
 def index():
     """Serve the index page."""
     return render_page("index.html", page_title="Flask Index")
-
-
-@app.route("/example_form", methods=["GET", "POST"])
-def example_form():
-    """Minimal example form handler."""
-    return render_page("example_form.html", page_title="Example Form")
 
 
 @app.route("/<path:page_name>")
