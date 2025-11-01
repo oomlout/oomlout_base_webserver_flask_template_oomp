@@ -31,7 +31,7 @@ PARTS_DIR = BASE_DIR / "parts"
 PART_SOURCE_SPECS: List[Tuple[str, Any]] = []
 PART_SOURCE_SPECS.append(("base_parts", PARTS_DIR))
 # Z:\oomlout_oomp_version_1_messy oomp_main
-#PART_SOURCE_SPECS.append(("oomp_main", r"Z:\oomlout_oomp_version_1_messy\parts"))
+PART_SOURCE_SPECS.append(("oomp_main", r"Z:\oomlout_oomp_version_1_messy\parts"))
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
@@ -57,6 +57,37 @@ else:
 def _timestamp() -> str:
     """Return a UTC timestamp string for logging."""
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+def _load_port_config() -> int:
+    """Load port configuration from web_oomp_port.yaml file."""
+    port_file = BASE_DIR / "web_oomp_port.yaml"
+    default_port = 5001
+    
+    if not port_file.exists():
+        return default_port
+    
+    if yaml is None:
+        print(f"[config] PyYAML not available; using default port {default_port}")
+        return default_port
+    
+    try:
+        with port_file.open("r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle)
+        
+        if isinstance(config, dict) and "port" in config:
+            port = config["port"]
+            if isinstance(port, int) and 1 <= port <= 65535:
+                return port
+            else:
+                print(f"[config] Invalid port value in {port_file}: {port}; using default {default_port}")
+                return default_port
+        else:
+            print(f"[config] No 'port' key found in {port_file}; using default {default_port}")
+            return default_port
+    except Exception as exc:
+        print(f"[config] Failed to load {port_file}: {exc}; using default {default_port}")
+        return default_port
 
 
 def _json_default(value: Any) -> str:
@@ -659,6 +690,33 @@ def _collect_part_images(group: str, part_info: Dict[str, Any]) -> List[Dict[str
     return images
 
 
+def _collect_part_files(group: str, part_info: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Gather all file metadata for a part directory."""
+    base_dir = PART_SOURCE_DIRS.get(group)
+    if not base_dir:
+        return []
+
+    relative_dir: Path = part_info.get("relative_dir", Path("."))
+    part_dir = (base_dir / relative_dir).resolve()
+    if not part_dir.exists() or not part_dir.is_dir():
+        return []
+
+    files: List[Dict[str, str]] = []
+    for file_path in sorted(part_dir.iterdir()):
+        if not file_path.is_file():
+            continue
+        rel_asset = file_path.relative_to(base_dir).as_posix()
+        files.append(
+            {
+                "filename": file_path.name,
+                "url": url_for("part_media", group=group, asset_path=rel_asset),
+                "size": file_path.stat().st_size,
+                "extension": file_path.suffix.lower(),
+            }
+        )
+    return files
+
+
 @app.route("/reload", methods=["GET", "POST"])
 def reload_data_view():
     """Reload cached data from disk and display the current snapshot."""
@@ -768,6 +826,7 @@ def part_detail(group: str, part_id: str):
         abort(404)
 
     part_images = _collect_part_images(group, part_info)
+    part_files = _collect_part_files(group, part_info)
     source_dir = PART_SOURCE_DIRS.get(group)
     relative_dir: Path = part_info.get("relative_dir", Path("."))
     relative_dir_str = relative_dir.as_posix() if str(relative_dir) != "." else "."
@@ -807,6 +866,7 @@ def part_detail(group: str, part_id: str):
         page_title=f"Part: {part_context['id']}",
         part=part_context,
         part_images=part_images,
+        part_files=part_files,
         part_yaml_html=highlighted_yaml,
     )
 
@@ -842,5 +902,7 @@ def serve_page(page_name: str):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    port = _load_port_config()
+    print(f"[config] Starting server on port {port}")
+    app.run(host="0.0.0.0", port=port, debug=True)
     

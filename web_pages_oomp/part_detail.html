@@ -41,6 +41,21 @@
 </section>
 {% endif %}
 
+{% if part_files %}
+<section class="info-card">
+  <h3>Files</h3>
+  <div class="file-list">
+    {% for file in part_files %}
+    <div class="file-item">
+      <span class="file-name">{{ file.filename }}</span>
+      <span class="file-size">({{ "%.1f"|format(file.size / 1024) }} KB)</span>
+      <a href="{{ file.url }}" download="{{ file.filename }}" class="download-link">Download</a>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 <section class="info-card">
   <h3>YAML Details</h3>
   <div class="code-block codehilite">{{ part_yaml_html | safe }}</div>
@@ -141,6 +156,47 @@
   .image-modal figcaption {
     font-size: 0.85rem;
     color: var(--text-muted);
+  }
+
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .file-name {
+    flex: 1;
+    font-weight: 500;
+  }
+
+  .file-size {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .download-link {
+    padding: 0.25rem 0.6rem;
+    background: var(--accent);
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .download-link:hover {
+    background: var(--accent-strong);
   }
 </style>
 
