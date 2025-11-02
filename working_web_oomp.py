@@ -216,7 +216,7 @@ def _resolve_path(raw_paths: List[str]) -> Path:
 
 
 def _load_yaml_group(source_dir: Path, group_name: str) -> Dict[str, Any]:
-    """Load all YAML files under a directory with simple console progress."""
+    """Load only working.yaml files under a directory with simple console progress."""
     if yaml is None:
         print(f"[setup] {group_name}: PyYAML is not available; skipping load.", flush=True)
         return {}
@@ -225,7 +225,7 @@ def _load_yaml_group(source_dir: Path, group_name: str) -> Dict[str, Any]:
         print(f"[setup] {group_name}: directory {source_dir} not found; skipping.", flush=True)
         return {}
 
-    yaml_files = sorted(source_dir.rglob("*.yaml"))
+    yaml_files = sorted(source_dir.rglob("working.yaml"))
     bundle_path = source_dir / f".{group_name}_bundle.json"
 
     current_meta: Dict[str, Dict[str, float]] = {}
