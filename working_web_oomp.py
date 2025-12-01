@@ -8,7 +8,7 @@ from importlib import import_module, reload
 from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from flask import Flask, abort, render_template, request, send_from_directory, url_for
+from flask import Flask, abort, render_template, request, send_from_directory, url_for, jsonify
 from jinja2 import TemplateNotFound
 
 try:
@@ -35,6 +35,10 @@ PART_SOURCE_SPECS.append(("oomp_main", r"Z:\oomlout_oomp_version_1_messy\parts")
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"}
+
+# File filter page configuration - Change this value to adjust the display limit
+FILE_FILTER_MAX_DISPLAY = 10  # Maximum number of files to display on filter_file page
+
 OOMP_TAXONOMY_FIELDS: List[str] = [
     "classification",
     "type",
@@ -663,6 +667,58 @@ def _collect_bip39_entries() -> List[Dict[str, Any]]:
     return entries
 
 
+def _collect_file_entries() -> List[Dict[str, Any]]:
+    """Collect all files from all parts with their metadata."""
+    file_entries: List[Dict[str, Any]] = []
+    
+    for group_name, group_index in PART_INDEX.items():
+        base_dir = PART_SOURCE_DIRS.get(group_name)
+        if not base_dir:
+            continue
+            
+        for part_id, part_info in group_index.items():
+            relative_dir: Path = part_info.get("relative_dir", Path("."))
+            part_dir = (base_dir / relative_dir).resolve()
+            
+            if not part_dir.exists() or not part_dir.is_dir():
+                continue
+                
+            # Get all files in this part directory
+            for file_path in part_dir.iterdir():
+                if not file_path.is_file():
+                    continue
+                    
+                rel_asset = file_path.relative_to(base_dir).as_posix()
+                words = part_info.get("words") or []
+                words_lower = [word.lower() for word in words]
+                
+                # Create search blob including part info and filename
+                search_parts = [
+                    part_info.get("search_blob", ""),
+                    group_name.lower(),
+                    " ".join(words_lower),
+                    file_path.name.lower(),
+                ]
+                search_blob = " ".join(part for part in search_parts if part).strip()
+                
+                file_entries.append({
+                    "group": group_name,
+                    "part_id": part_id,
+                    "filename": file_path.name,
+                    "file_url": url_for("part_media", group=group_name, asset_path=rel_asset),
+                    "part_detail_url": url_for("part_detail", group=group_name, part_id=part_id),
+                    "top_category": part_info.get("top_category"),
+                    "search_blob": search_blob,
+                    "file_size": file_path.stat().st_size,
+                    "file_extension": file_path.suffix.lower(),
+                    "is_image": file_path.suffix.lower() in IMAGE_EXTENSIONS,
+                })
+    
+    # Sort by group, part_id, then filename
+    file_entries.sort(key=lambda item: (item["group"], item["part_id"], item["filename"]))
+    return file_entries
+
+
 def _collect_part_images(group: str, part_info: Dict[str, Any]) -> List[Dict[str, str]]:
     """Gather image metadata for a part directory."""
     base_dir = PART_SOURCE_DIRS.get(group)
@@ -814,6 +870,188 @@ def filter_parts():
     )
 
 
+def _collect_available_extensions() -> List[str]:
+    """Quickly collect just the available file extensions without loading full file data."""
+    extensions = set()
+    
+    for group_name, group_index in PART_INDEX.items():
+        base_dir = PART_SOURCE_DIRS.get(group_name)
+        if not base_dir:
+            continue
+            
+        for part_id, part_info in group_index.items():
+            relative_dir: Path = part_info.get("relative_dir", Path("."))
+            part_dir = (base_dir / relative_dir).resolve()
+            
+            if not part_dir.exists() or not part_dir.is_dir():
+                continue
+                
+            # Just get file extensions, don't load full file data
+            try:
+                for file_path in part_dir.iterdir():
+                    if file_path.is_file() and file_path.suffix:
+                        extensions.add(file_path.suffix.lower())
+            except (OSError, PermissionError):
+                continue
+    
+    return sorted(extensions)
+
+
+@app.route("/filter_file")
+def filter_file():
+    """Interactive file filter page with image previews."""
+    # Only collect extensions initially for fast loading
+    available_extensions = _collect_available_extensions()
+    
+    return render_page(
+        "filter_file.html",
+        page_title="File Filter",
+        file_entries=[],  # Start with empty list
+        total_files=0,    # Will be updated via AJAX
+        available_extensions=available_extensions,
+        max_display_files=FILE_FILTER_MAX_DISPLAY,
+        page_meta={"highlight": "filter_file"},
+    )
+
+
+@app.route("/api/filter_files")
+def api_filter_files():
+    """API endpoint to fetch filtered files based on selected extensions with pagination."""
+    # Get parameters
+    selected_extensions = request.args.getlist('extensions')
+    text_filter = request.args.get('text', '').lower().strip()
+    filename_filter = request.args.get('filename', '').lower().strip()
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', FILE_FILTER_MAX_DISPLAY))
+    
+    if not selected_extensions:
+        return jsonify({"files": [], "total": 0, "page": page, "has_more": False})
+    
+    # Calculate offset
+    offset = (page - 1) * per_page
+    
+    # Collect files only for selected extensions
+    file_entries = []
+    
+    # Debug logging
+    print(f"[API] filter_files called: extensions={selected_extensions}, page={page}, text='{text_filter}', filename='{filename_filter}'")
+    
+    if not PART_INDEX:
+        print("[API] PART_INDEX is empty - no parts loaded")
+        return jsonify({"files": [], "total": 0, "page": page, "has_more": False, "error": "No parts loaded"})
+    
+    # Limit to smaller groups first for testing
+    groups_to_process = ["base_parts"]  # Start with just base_parts for speed
+    
+    for group_name in groups_to_process:
+        if group_name not in PART_INDEX:
+            continue
+            
+        group_index = PART_INDEX[group_name]
+        base_dir = PART_SOURCE_DIRS.get(group_name)
+        if not base_dir:
+            print(f"[API] No base_dir for group {group_name}")
+            continue
+            
+        print(f"[API] Processing group {group_name} with {len(group_index)} parts")
+            
+        for part_id, part_info in group_index.items():
+            relative_dir: Path = part_info.get("relative_dir", Path("."))
+            part_dir = (base_dir / relative_dir).resolve()
+            
+            if not part_dir.exists() or not part_dir.is_dir():
+                continue
+            
+            words = part_info.get("words") or []
+            words_lower = [word.lower() for word in words]
+            
+            # Create search blob for this part
+            search_parts = [
+                part_info.get("search_blob", ""),
+                group_name.lower(),
+                " ".join(words_lower),
+            ]
+            part_search_blob = " ".join(part for part in search_parts if part).strip()
+                
+            try:
+                for file_path in part_dir.iterdir():
+                    if not file_path.is_file():
+                        continue
+                    
+                    file_ext = file_path.suffix.lower()
+                    if file_ext not in selected_extensions:
+                        continue
+                        
+                    # Apply filters
+                    file_search_blob = part_search_blob + " " + file_path.name.lower()
+                    
+                    text_match = not text_filter or text_filter in file_search_blob
+                    # Improved filename matching - support multiple terms and wildcard
+                    filename_match = True
+                    if filename_filter and filename_filter != '*':
+                        filename_lower = file_path.name.lower()
+                        # Split filter by spaces and require all terms to match
+                        filter_terms = filename_filter.strip().split()
+                        filename_match = all(term in filename_lower for term in filter_terms)
+                        
+                        # Debug filename filtering (only show first few mismatches)
+                        if not filename_match and len(file_entries) < 5:
+                            print(f"[API] Filename filter terms {filter_terms} did not all match in '{filename_lower}'")
+                    
+                    if not (text_match and filename_match):
+                        continue
+                    
+                    rel_asset = file_path.relative_to(base_dir).as_posix()
+                    
+                    file_entries.append({
+                        "group": group_name,
+                        "part_id": part_id,
+                        "filename": file_path.name,
+                        "file_url": url_for("part_media", group=group_name, asset_path=rel_asset),
+                        "part_detail_url": url_for("part_detail", group=group_name, part_id=part_id),
+                        "top_category": part_info.get("top_category"),
+                        "search_blob": file_search_blob,
+                        "file_size": file_path.stat().st_size,
+                        "file_extension": file_ext,
+                        "is_image": file_ext in IMAGE_EXTENSIONS,
+                    })
+                    
+                    # Early break if we have collected enough files for several pages
+                    if len(file_entries) >= per_page * 10:  # Get 10 pages worth of data max
+                        print(f"[API] Early break at {len(file_entries)} files for performance")
+                        break
+                        
+            except (OSError, PermissionError):
+                continue
+                
+            # Early break from outer loop if we have enough files
+            if len(file_entries) >= per_page * 10:
+                break
+    
+    # Sort all results first
+    file_entries.sort(key=lambda item: (item["group"], item["part_id"], item["filename"]))
+    
+    # Calculate pagination
+    total_files = len(file_entries)
+    start_idx = offset
+    end_idx = offset + per_page
+    
+    # Get the requested page of results
+    page_files = file_entries[start_idx:end_idx]
+    has_more = end_idx < total_files
+    
+    print(f"[API] Returning {len(page_files)} files out of {total_files} total, page {page}, has_more: {has_more}")
+    
+    return jsonify({
+        "files": page_files,
+        "total": total_files,
+        "page": page,
+        "per_page": per_page,
+        "has_more": has_more,
+        "showing": len(page_files)
+    })
+
+
 @app.route("/parts/<group>/<path:part_id>")
 def part_detail(group: str, part_id: str):
     """Display detail for a single part."""
@@ -904,5 +1142,5 @@ def serve_page(page_name: str):
 if __name__ == "__main__":
     port = _load_port_config()
     print(f"[config] Starting server on port {port}")
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
     
